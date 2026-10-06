@@ -53,6 +53,12 @@ locals {
   }
 }
 
+# Cloud SQL instance names cannot be reused for ~1 week after deletion, so a destroy + redeploy with the
+# same environment name would fail. A random suffix makes every deployment unique.
+resource "random_id" "suffix" {
+  byte_length = 3
+}
+
 resource "random_password" "db" {
   length  = 24
   special = false
@@ -74,7 +80,7 @@ resource "google_service_networking_connection" "private" {
 }
 
 resource "google_sql_database_instance" "this" {
-  name                = var.name
+  name                = "${var.name}-${random_id.suffix.hex}"
   region              = var.region
   database_version    = "POSTGRES_16"
   deletion_protection = var.deletion_protection
