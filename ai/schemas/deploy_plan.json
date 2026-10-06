@@ -1,0 +1,13 @@
+{
+  "type": "object",
+  "required": ["action", "cloud", "ref", "profile", "ttl_hours", "rationale"],
+  "additionalProperties": false,
+  "properties": {
+    "action": { "type": "string", "enum": ["deploy_preview", "teardown_preview", "unknown"] },
+    "cloud": { "type": "string", "enum": ["aws", "gcp"] },
+    "ref": { "type": "string", "description": "git branch or ref to deploy", "maxLength": 100 },
+    "profile": { "type": "string", "enum": ["cost-sensitive", "high-availability"] },
+    "ttl_hours": { "type": "integer", "minimum": 1, "maximum": 72 },
+    "rationale": { "type": "string", "maxLength": 400 }
+  }
+}

@@ -1,0 +1,4 @@
+{"resource_changes":[
+ {"address":"module.database.aws_db_instance.this","type":"aws_db_instance","change":{"actions":["delete","create"],"after":{}}},
+ {"address":"module.database.aws_security_group.db","type":"aws_security_group","change":{"actions":["update"],"after":{"ingress":[{"cidr_blocks":["0.0.0.0/0"]}]}}}
+]}

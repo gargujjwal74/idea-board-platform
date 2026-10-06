@@ -1,0 +1,5 @@
+# Cloud-specific deltas only. Everything else is shared.
+# EKS provisions a (classic) ELB for type=LoadBalancer out of the box, no extra controller needed.
+service:
+  type: LoadBalancer
+  annotations: {}

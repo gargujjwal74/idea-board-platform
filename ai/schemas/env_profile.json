@@ -1,0 +1,25 @@
+{
+  "type": "object",
+  "required": ["profile_name", "node_count", "node_size", "db_size", "high_availability", "backend_replicas", "autoscaling", "rationale"],
+  "additionalProperties": false,
+  "properties": {
+    "profile_name": { "type": "string", "maxLength": 60 },
+    "node_count": { "type": "integer", "minimum": 1, "maximum": 6 },
+    "node_size": { "type": "string", "enum": ["small", "medium", "large"] },
+    "db_size": { "type": "string", "enum": ["small", "medium", "large"] },
+    "high_availability": { "type": "boolean" },
+    "backend_replicas": { "type": "integer", "minimum": 1, "maximum": 10 },
+    "autoscaling": {
+      "type": "object",
+      "required": ["enabled", "min_replicas", "max_replicas", "cpu_target_percent"],
+      "additionalProperties": false,
+      "properties": {
+        "enabled": { "type": "boolean" },
+        "min_replicas": { "type": "integer", "minimum": 1, "maximum": 10 },
+        "max_replicas": { "type": "integer", "minimum": 1, "maximum": 20 },
+        "cpu_target_percent": { "type": "integer", "minimum": 30, "maximum": 90 }
+      }
+    },
+    "rationale": { "type": "string", "maxLength": 500 }
+  }
+}

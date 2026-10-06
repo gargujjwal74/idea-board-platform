@@ -1,0 +1,13 @@
+# kind / local cluster: images loaded with `kind load`, bundled Postgres, no LB, no metrics-server.
+image:
+  registry: local
+  tag: dev
+  pullPolicy: Never
+service:
+  type: ClusterIP
+autoscaling:
+  enabled: false
+backend: { replicas: 1 }
+frontend: { replicas: 1 }
+postgres:
+  enabled: true

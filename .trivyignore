@@ -1,0 +1,10 @@
+# Documented, deliberate exceptions. Revisit for production.
+
+# Public Kubernetes API endpoint: required so GitHub-hosted runners can deploy.
+# Authentication is IAM (AWS) / Google IAM (GKE); narrow it with the api_allowed_cidrs variable.
+AWS-0040
+AWS-0041
+GCP-0061
+
+# Egress-all on EKS node SG comes from the upstream terraform-aws-modules/eks module (nodes need to reach ECR/GHCR/AWS APIs via NAT).
+AWS-0104

@@ -1,0 +1,4 @@
+# GKE provisions an external passthrough Network LB for type=LoadBalancer out of the box.
+service:
+  type: LoadBalancer
+  annotations: {}

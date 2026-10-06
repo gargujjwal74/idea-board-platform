@@ -1,0 +1,11 @@
+{
+  "type": "object",
+  "required": ["risk", "summary", "concerns", "recommendation"],
+  "additionalProperties": false,
+  "properties": {
+    "risk": { "type": "string", "enum": ["low", "medium", "high"] },
+    "summary": { "type": "string", "maxLength": 600 },
+    "concerns": { "type": "array", "maxItems": 8, "items": { "type": "string", "maxLength": 300 } },
+    "recommendation": { "type": "string", "enum": ["approve", "review", "block"] }
+  }
+}

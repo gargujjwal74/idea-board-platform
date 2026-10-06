@@ -1,0 +1,12 @@
+{
+  "pods": [
+    {"name": "ib-backend-abc", "phase": "Running", "ready": true, "restarts": 0, "waiting_reason": null, "last_terminated_reason": null},
+    {"name": "ib-frontend-def", "phase": "Running", "ready": true, "restarts": 0, "waiting_reason": null, "last_terminated_reason": null}
+  ],
+  "warning_events": [],
+  "logs": {
+    "backend": ["ERROR slow query on ideas: 4800 ms", "ERROR slow query on ideas: 5100 ms", "WARNING pool exhausted, waiting for connection", "ERROR slow query on ideas: 6200 ms"],
+    "frontend": []
+  },
+  "smoke": {"ok": true, "checks": [{"name": "GET /", "ok": true, "status": 200}, {"name": "GET /api/ideas x10", "ok": true, "status": 200}], "p50_ms": 4300, "max_ms": 6900}
+}

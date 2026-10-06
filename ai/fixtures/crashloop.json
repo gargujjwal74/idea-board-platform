@@ -1,0 +1,12 @@
+{
+  "pods": [
+    {"name": "ib-backend-abc", "phase": "Running", "ready": false, "restarts": 5, "waiting_reason": "CrashLoopBackOff", "last_terminated_reason": "Error"},
+    {"name": "ib-frontend-def", "phase": "Running", "ready": true, "restarts": 0, "waiting_reason": null, "last_terminated_reason": null}
+  ],
+  "warning_events": [{"reason": "BackOff", "message": "Back-off restarting failed container backend", "object": "ib-backend-abc"}],
+  "logs": {
+    "backend": ["psycopg.OperationalError: connection failed: password authentication failed for user \"ideas\"", "RuntimeError: database unavailable"],
+    "frontend": []
+  },
+  "smoke": {"ok": false, "checks": [{"name": "GET /", "ok": true, "status": 200}, {"name": "GET /api/ideas x10", "ok": false, "status": 502}], "p50_ms": 12, "max_ms": 30}
+}

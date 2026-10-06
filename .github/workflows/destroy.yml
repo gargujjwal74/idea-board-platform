@@ -1,0 +1,61 @@
+name: Destroy
+
+# Tear an environment down to stop cloud spend. Manual only, with a typed confirmation.
+on:
+  workflow_dispatch:
+    inputs:
+      cloud:
+        description: Which cloud to destroy
+        type: choice
+        options: [aws, gcp]
+        required: true
+      name:
+        description: Environment name (as used at deploy time)
+        default: idea-board-staging
+      confirm:
+        description: 'Type "destroy" to confirm'
+        required: true
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  destroy:
+    if: inputs.confirm == 'destroy'
+    runs-on: ubuntu-latest
+    environment: ${{ inputs.cloud }}
+    env:
+      CLOUD: ${{ inputs.cloud }}
+      NAME: ${{ inputs.name }}
+      REGION: ${{ inputs.cloud == 'aws' && vars.AWS_REGION || vars.GCP_REGION }}
+      STATE_BUCKET: ${{ inputs.cloud == 'aws' && vars.AWS_STATE_BUCKET || vars.GCP_STATE_BUCKET }}
+      TF_VAR_name: ${{ inputs.name }}
+      TF_VAR_region: ${{ inputs.cloud == 'aws' && vars.AWS_REGION || vars.GCP_REGION }}
+      TF_VAR_project_id: ${{ vars.GCP_PROJECT_ID }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/cloud-login
+        with:
+          cloud: ${{ inputs.cloud }}
+          region: ${{ env.REGION }}
+          aws_role_arn: ${{ vars.AWS_ROLE_ARN }}
+          gcp_wif_provider: ${{ vars.GCP_WIF_PROVIDER }}
+          gcp_service_account: ${{ vars.GCP_SERVICE_ACCOUNT }}
+      - uses: hashicorp/setup-terraform@v3
+        with: { terraform_version: "~1.10" }
+      - run: scripts/tf-init.sh "$CLOUD"
+      - name: Remove load balancers first (they block VPC deletion)
+        continue-on-error: true
+        run: |
+          # Kubernetes-created LBs are not in Terraform state; delete the Services so the cloud LBs are released.
+          cd infra/envs/${CLOUD}
+          cluster="$(terraform output -raw cluster_name)"; loc="$(terraform output -raw cluster_location)"
+          if [ "$CLOUD" = aws ]; then aws eks update-kubeconfig --name "$cluster" --region "$REGION"
+          else gcloud components install gke-gcloud-auth-plugin --quiet || true
+               gcloud container clusters get-credentials "$cluster" --location "$loc" --project "${{ vars.GCP_PROJECT_ID }}"; fi
+          for ns in $(kubectl get ns -o name | sed 's#namespace/##' | grep -E '^(idea-board|pr-[0-9]+)$'); do
+            kubectl delete svc --all -n "$ns" --wait=true --timeout=5m
+          done
+      - run: terraform destroy -auto-approve -input=false
+        working-directory: infra/envs/${{ inputs.cloud }}

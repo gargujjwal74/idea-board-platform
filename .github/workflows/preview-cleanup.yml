@@ -1,0 +1,67 @@
+name: Preview cleanup
+
+# Removes preview namespaces when their PR closes and when their TTL (set by /deploy-preview) expires.
+on:
+  schedule:
+    - cron: "17 * * * *"
+  pull_request:
+    types: [closed]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  cleanup:
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        cloud: [aws, gcp]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/cloud-login
+        continue-on-error: true
+        id: login
+        with:
+          cloud: ${{ matrix.cloud }}
+          region: ${{ matrix.cloud == 'aws' && vars.AWS_REGION || vars.GCP_REGION }}
+          aws_role_arn: ${{ vars.AWS_ROLE_ARN }}
+          gcp_wif_provider: ${{ vars.GCP_WIF_PROVIDER }}
+          gcp_service_account: ${{ vars.GCP_SERVICE_ACCOUNT }}
+      - uses: azure/setup-helm@v4
+        if: steps.login.outcome == 'success'
+      - uses: ./.github/actions/kubeconfig
+        if: steps.login.outcome == 'success'
+        continue-on-error: true
+        id: kube
+        with:
+          cloud: ${{ matrix.cloud }}
+          region: ${{ matrix.cloud == 'aws' && vars.AWS_REGION || vars.GCP_REGION }}
+          cluster_name: ${{ vars.STAGING_NAME || 'idea-board-staging' }}
+          cluster_location: ${{ matrix.cloud == 'aws' && vars.AWS_REGION || (vars.GCP_CLUSTER_LOCATION || format('{0}-a', vars.GCP_REGION)) }}
+          gcp_project_id: ${{ vars.GCP_PROJECT_ID }}
+          install_metrics_server: "false"
+      - name: Delete closed-PR and expired previews
+        if: steps.kube.outcome == 'success'
+        env:
+          EVENT: ${{ github.event_name }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          if [ "$EVENT" = "pull_request" ]; then
+            ns="pr-${PR_NUMBER}"
+            helm uninstall "ib-${ns}" -n "$ns" --ignore-not-found || true
+            kubectl delete namespace "$ns" --ignore-not-found
+            exit 0
+          fi
+          now=$(date +%s)
+          kubectl get ns -o json | jq -r '.items[] | select(.metadata.name|test("^pr-[0-9]+$")) | "\(.metadata.name) \(.metadata.annotations["idea-board/expires-at"] // "0")"' |
+          while read -r ns exp; do
+            if [ "$exp" -lt "$now" ]; then
+              echo "Expired: $ns"
+              helm uninstall "ib-${ns}" -n "$ns" --ignore-not-found || true
+              kubectl delete namespace "$ns" --ignore-not-found
+            fi
+          done

@@ -1,0 +1,1 @@
+{"risk":"low","summary":"Adds a new VPC, cluster and database from scratch; nothing existing is modified or destroyed.","concerns":[],"recommendation":"approve"}

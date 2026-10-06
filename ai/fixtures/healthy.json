@@ -1,0 +1,12 @@
+{
+  "pods": [
+    {"name": "ib-backend-abc", "phase": "Running", "ready": true, "restarts": 0, "waiting_reason": null, "last_terminated_reason": null},
+    {"name": "ib-frontend-def", "phase": "Running", "ready": true, "restarts": 0, "waiting_reason": null, "last_terminated_reason": null}
+  ],
+  "warning_events": [],
+  "logs": {
+    "backend": ["INFO database ready", "INFO:     10.0.1.5:4242 - \"GET /readyz HTTP/1.1\" 200 OK", "INFO:     10.0.1.7:5522 - \"GET /api/ideas HTTP/1.1\" 200 OK"],
+    "frontend": ["10.0.1.7 - - \"GET / HTTP/1.1\" 200 615"]
+  },
+  "smoke": {"ok": true, "checks": [{"name": "GET /", "ok": true, "status": 200}, {"name": "GET /api/ideas x10", "ok": true, "status": 200}], "p50_ms": 38, "max_ms": 71}
+}

@@ -1,0 +1,12 @@
+{
+  "type": "object",
+  "required": ["healthy", "confidence", "summary", "evidence", "suspected_cause"],
+  "additionalProperties": false,
+  "properties": {
+    "healthy": { "type": "boolean" },
+    "confidence": { "type": "number", "minimum": 0, "maximum": 1 },
+    "summary": { "type": "string", "maxLength": 600 },
+    "evidence": { "type": "array", "maxItems": 8, "items": { "type": "string", "maxLength": 300 } },
+    "suspected_cause": { "type": "string", "maxLength": 300 }
+  }
+}

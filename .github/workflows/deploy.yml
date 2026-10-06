@@ -1,0 +1,244 @@
+name: Deploy
+
+# Manual deploy to one or both clouds, or automatic on main when repo variable AUTO_DEPLOY=true.
+on:
+  workflow_dispatch:
+    inputs:
+      clouds:
+        description: Where to deploy
+        type: choice
+        options: [both, aws, gcp]
+        default: both
+      goal:
+        description: 'Environment goal in plain English (AI turns it into sizing), e.g. "cost-sensitive staging" or "HA production"'
+        default: cost-sensitive staging
+      image_tag:
+        description: Image tag to deploy (default sha-<7 chars of this commit>; CI must have built it)
+        default: ""
+      name:
+        description: Environment name (prefixes all cloud resources)
+        default: ""
+      allow_blocked:
+        description: Apply even if the AI/deterministic plan review says "block"
+        type: boolean
+        default: false
+  push:
+    branches: [main]
+    paths: [app/**, charts/**, infra/**, ai/**]
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  prepare:
+    if: github.event_name == 'workflow_dispatch' || vars.AUTO_DEPLOY == 'true'
+    runs-on: ubuntu-latest
+    outputs:
+      matrix: ${{ steps.vars.outputs.matrix }}
+      tag: ${{ steps.vars.outputs.tag }}
+      name: ${{ steps.vars.outputs.name }}
+    steps:
+      - uses: actions/checkout@v4
+      - id: vars
+        env:
+          CLOUDS: ${{ inputs.clouds || 'both' }}
+          TAG_IN: ${{ inputs.image_tag }}
+          NAME_IN: ${{ inputs.name }}
+        run: |
+          case "$CLOUDS" in
+            both) m='["aws","gcp"]' ;;
+            aws|gcp) m="[\"$CLOUDS\"]" ;;
+            *) echo "bad clouds"; exit 1 ;;
+          esac
+          tag="${TAG_IN:-sha-${GITHUB_SHA::7}}"
+          name="${NAME_IN:-${{ vars.STAGING_NAME || 'idea-board-staging' }}}"
+          [[ "$tag"  =~ ^[A-Za-z0-9_.-]{1,64}$ ]] || { echo "bad tag"; exit 1; }
+          [[ "$name" =~ ^[a-z][a-z0-9-]{2,30}$  ]] || { echo "bad name"; exit 1; }
+          echo "matrix=$m" >> "$GITHUB_OUTPUT"
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+          echo "name=$name" >> "$GITHUB_OUTPUT"
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.12" }
+      - run: pip install -r ai/requirements.txt
+      - name: AI - turn the environment goal into validated sizing
+        env:
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          GEMINI_MODEL: ${{ vars.GEMINI_MODEL }}
+          GOAL: ${{ inputs.goal || vars.DEFAULT_GOAL || 'cost-sensitive staging' }}
+        run: |
+          python ai/env_profile.py --goal "$GOAL" --out generated | tee -a "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v4
+        with: { name: profile, path: generated/ }
+
+  deploy:
+    needs: prepare
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false # one cloud failing must not stop the other
+      matrix:
+        cloud: ${{ fromJSON(needs.prepare.outputs.matrix) }}
+    environment: ${{ matrix.cloud }} # add required reviewers on this GitHub Environment for approval gates
+    concurrency:
+      group: deploy-${{ matrix.cloud }}-${{ needs.prepare.outputs.name }}
+      cancel-in-progress: false
+    env:
+      CLOUD: ${{ matrix.cloud }}
+      NAME: ${{ needs.prepare.outputs.name }}
+      TAG: ${{ needs.prepare.outputs.tag }}
+      REGION: ${{ matrix.cloud == 'aws' && vars.AWS_REGION || vars.GCP_REGION }}
+      STATE_BUCKET: ${{ matrix.cloud == 'aws' && vars.AWS_STATE_BUCKET || vars.GCP_STATE_BUCKET }}
+      TF_VAR_name: ${{ needs.prepare.outputs.name }}
+      TF_VAR_region: ${{ matrix.cloud == 'aws' && vars.AWS_REGION || vars.GCP_REGION }}
+      TF_VAR_project_id: ${{ vars.GCP_PROJECT_ID }} # ignored by the aws root
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with: { name: profile, path: generated }
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.12" }
+      - run: pip install -r ai/requirements.txt
+
+      - uses: ./.github/actions/cloud-login
+        with:
+          cloud: ${{ matrix.cloud }}
+          region: ${{ env.REGION }}
+          aws_role_arn: ${{ vars.AWS_ROLE_ARN }}
+          gcp_wif_provider: ${{ vars.GCP_WIF_PROVIDER }}
+          gcp_service_account: ${{ vars.GCP_SERVICE_ACCOUNT }}
+
+      # ---------------------------------------------------------------- infrastructure
+      - uses: hashicorp/setup-terraform@v3
+        with: { terraform_version: "~1.10", terraform_wrapper: false }
+      - name: Terraform init
+        run: scripts/tf-init.sh "$CLOUD"
+      - name: Apply AI-generated sizing
+        run: cp generated/profile.auto.tfvars.json "infra/envs/$CLOUD/"
+      - name: Terraform plan
+        working-directory: infra/envs/${{ matrix.cloud }}
+        run: |
+          terraform plan -input=false -out=tfplan
+          terraform show -json tfplan > ../../../plan.json
+      - name: AI plan review
+        id: review
+        env:
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          GEMINI_MODEL: ${{ vars.GEMINI_MODEL }}
+        run: |
+          python ai/plan_review.py --plan-json plan.json --cloud "$CLOUD" --out plan-review.md
+          cat plan-review.md >> "$GITHUB_STEP_SUMMARY"
+      - name: Gate on review
+        if: steps.review.outputs.recommendation == 'block' && inputs.allow_blocked != true
+        run: |
+          echo "::error::Plan review recommends BLOCK. Re-run with allow_blocked=true after a human has read the summary."
+          exit 1
+      - name: Terraform apply
+        working-directory: infra/envs/${{ matrix.cloud }}
+        run: terraform apply -input=false tfplan
+
+      - name: Read infrastructure outputs
+        id: tf
+        working-directory: infra/envs/${{ matrix.cloud }}
+        run: |
+          echo "cluster_name=$(terraform output -raw cluster_name)" >> "$GITHUB_OUTPUT"
+          echo "cluster_location=$(terraform output -raw cluster_location)" >> "$GITHUB_OUTPUT"
+          db_url="$(terraform output -raw database_url)"
+          echo "::add-mask::$db_url"
+          # Hand the DB URL to helm through a 0600 values file, never via argv
+          umask 077
+          jq -n --arg u "$db_url" '{database:{url:$u}}' > "$RUNNER_TEMP/db.values.json"
+
+      # ---------------------------------------------------------------- application
+      - uses: ./.github/actions/kubeconfig
+        with:
+          cloud: ${{ matrix.cloud }}
+          region: ${{ env.REGION }}
+          cluster_name: ${{ steps.tf.outputs.cluster_name }}
+          cluster_location: ${{ steps.tf.outputs.cluster_location }}
+          gcp_project_id: ${{ vars.GCP_PROJECT_ID }}
+
+      - name: Helm deploy
+        id: helm
+        run: |
+          owner="${GITHUB_REPOSITORY_OWNER,,}"
+          # Revision to roll back to if this release turns out unhealthy
+          prev="$(helm history ib -n idea-board -o json 2>/dev/null | jq -r '[.[] | select(.status=="deployed")] | last | .revision // empty' || true)"
+          echo "prev=${prev}" >> "$GITHUB_OUTPUT"
+          if helm upgrade --install ib charts/idea-board -n idea-board --create-namespace \
+               -f "charts/idea-board/values/${CLOUD}.yaml" \
+               -f generated/profile.values.json \
+               -f "$RUNNER_TEMP/db.values.json" \
+               --set "image.registry=ghcr.io/${owner}" --set "image.tag=${TAG}" \
+               --wait --timeout 8m; then
+            echo "ok=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "ok=false" >> "$GITHUB_OUTPUT"
+            echo "::warning::helm upgrade failed or timed out"
+          fi
+
+      - name: Wait for public endpoint
+        id: url
+        if: steps.helm.outputs.ok == 'true'
+        run: |
+          for i in $(seq 1 60); do
+            host="$(kubectl get svc ib-frontend -n idea-board -o jsonpath='{.status.loadBalancer.ingress[0].hostname}{.status.loadBalancer.ingress[0].ip}')"
+            [ -n "$host" ] && break
+            sleep 10
+          done
+          [ -n "$host" ] || { echo "::error::no load balancer address after 10 min"; exit 1; }
+          echo "url=http://${host}" >> "$GITHUB_OUTPUT"
+
+      - name: AI health check
+        id: health
+        if: steps.helm.outputs.ok == 'true'
+        env:
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          GEMINI_MODEL: ${{ vars.GEMINI_MODEL }}
+        run: |
+          set +e
+          python ai/health_judge.py --namespace idea-board --release ib \
+            --url "${{ steps.url.outputs.url }}" --cloud "$CLOUD" --wait-seconds 420 --out health-report
+          echo "code=$?" >> "$GITHUB_OUTPUT"
+          exit 0
+
+      - name: Automatic rollback
+        id: rollback
+        if: always() && (steps.helm.outputs.ok == 'false' || steps.health.outputs.code == '1')
+        run: |
+          prev="${{ steps.helm.outputs.prev }}"
+          if [ -n "$prev" ]; then
+            echo "Rolling back to revision $prev"
+            helm rollback ib "$prev" -n idea-board --wait --timeout 5m
+            echo "### ⏪ Rolled back \`ib\` to revision $prev on $CLOUD" >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "First deployment: nothing to roll back to. Release left in place for debugging."
+            echo "### ⚠️ First deployment on $CLOUD failed; no previous revision to restore" >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      - name: Report
+        if: always()
+        run: |
+          [ -f health-report.md ] && cat health-report.md >> "$GITHUB_STEP_SUMMARY"
+          if [ "${{ steps.helm.outputs.ok }}" = "true" ]; then
+            echo "" >> "$GITHUB_STEP_SUMMARY"
+            echo "**${CLOUD} URL:** ${{ steps.url.outputs.url }}" >> "$GITHUB_STEP_SUMMARY"
+          fi
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: reports-${{ matrix.cloud }}
+          path: |
+            health-report.*
+            plan-review.md
+          if-no-files-found: ignore
+
+      - name: Fail the job if the release is bad
+        if: always()
+        run: |
+          if [ "${{ steps.helm.outputs.ok }}" != "true" ] || [ "${{ steps.health.outputs.code }}" = "1" ]; then
+            echo "::error::Deployment to $CLOUD was unhealthy (rolled back if a previous revision existed)."
+            exit 1
+          fi
+          if [ "${{ steps.health.outputs.code }}" = "2" ]; then
+            echo "::warning::AI health check was inconclusive; release kept. Please review the summary."
+          fi

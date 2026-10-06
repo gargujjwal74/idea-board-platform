@@ -1,0 +1,49 @@
+# Defaults are cloud-neutral. Per-cloud and per-profile overrides live in values/*.yaml.
+
+image:
+  registry: ghcr.io/CHANGE_ME_OWNER
+  backend: idea-board-backend
+  frontend: idea-board-frontend
+  tag: latest
+  pullPolicy: IfNotPresent
+
+backend:
+  replicas: 2
+  resources:
+    requests: { cpu: 100m, memory: 128Mi }
+    limits: { cpu: 500m, memory: 256Mi }
+
+frontend:
+  replicas: 2
+  resources:
+    requests: { cpu: 50m, memory: 64Mi }
+    limits: { cpu: 200m, memory: 128Mi }
+
+# Public entrypoint. LoadBalancer works on EKS, GKE, AKS, DOKS... with no ingress controller.
+service:
+  type: LoadBalancer
+  port: 80
+  annotations: {}   # cloud-specific LB tuning goes in values/<cloud>.yaml
+
+autoscaling:
+  enabled: true
+  minReplicas: 2
+  maxReplicas: 6
+  targetCPUUtilizationPercentage: 70
+
+# Database: either a managed instance (url supplied by Terraform output) or a bundled
+# throwaway Postgres (local kind / preview environments).
+database:
+  url: ""              # postgresql://user:pass@host:5432/db  (managed DB mode)
+  existingSecret: ""   # alternatively, name of a Secret with key DATABASE_URL
+
+postgres:
+  enabled: false       # true = deploy bundled Postgres (non-prod only)
+  user: ideas
+  password: ideas
+  db: ideas
+  persistence: true    # false = emptyDir (previews: no cloud disk driver needed, data is ephemeral)
+  storage: 1Gi
+  resources:
+    requests: { cpu: 50m, memory: 128Mi }
+    limits: { cpu: 500m, memory: 256Mi }

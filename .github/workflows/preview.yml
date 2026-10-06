@@ -1,0 +1,144 @@
+name: Preview (ChatOps)
+
+# PR comments:   /deploy-preview [branch] [on aws|gcp] [for a day] [ha]     /teardown-preview
+# An LLM turns the comment into a schema-validated plan; code renders the exact helm commands.
+on:
+  issue_comment:
+    types: [created]
+
+permissions:
+  contents: read
+  id-token: write
+  pull-requests: write
+  issues: write
+  packages: read
+
+jobs:
+  preview:
+    # Only trusted people, only on PRs, only our two commands.
+    if: >-
+      github.event.issue.pull_request &&
+      contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.comment.author_association) &&
+      (startsWith(github.event.comment.body, '/deploy-preview') || startsWith(github.event.comment.body, '/teardown-preview'))
+    runs-on: ubuntu-latest
+    concurrency:
+      group: preview-${{ github.event.issue.number }}
+      cancel-in-progress: false
+    env:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      PR: ${{ github.event.issue.number }}
+    steps:
+      # SECURITY: this workflow runs the DEFAULT branch's code (charts, scripts) with cloud credentials.
+      # PR code is never executed here; PR images are built by CI (no cloud creds) and only pulled.
+      - uses: actions/checkout@v4
+
+      - name: Acknowledge
+        run: gh api "repos/${{ github.repository }}/issues/comments/${{ github.event.comment.id }}/reactions" -f content=eyes >/dev/null
+
+      - name: Resolve PR
+        id: pr
+        run: |
+          json="$(gh pr view "$PR" --json headRefName,headRefOid,headRepositoryOwner)"
+          [ "$(jq -r .headRepositoryOwner.login <<<"$json")" = "${{ github.repository_owner }}" ] || { gh pr comment "$PR" --body "Previews are disabled for PRs from forks."; exit 1; }
+          echo "branch=$(jq -r .headRefName <<<"$json")" >> "$GITHUB_OUTPUT"
+          sha="$(jq -r .headRefOid <<<"$json")"
+          echo "tag=sha-${sha::7}" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.12" }
+      - run: pip install -r ai/requirements.txt
+
+      - name: AI - plan the preview
+        id: plan
+        env:
+          COMMENT: ${{ github.event.comment.body }}
+          BRANCH: ${{ steps.pr.outputs.branch }}
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          GEMINI_MODEL: ${{ vars.GEMINI_MODEL }}
+        run: |
+          owner="${GITHUB_REPOSITORY_OWNER,,}"
+          if ! python ai/deploy_plan.py --comment "$COMMENT" --pr "$PR" --branch "$BRANCH" \
+                 --default-cloud "${{ vars.DEFAULT_CLOUD || 'aws' }}" \
+                 --image-tag "${{ steps.pr.outputs.tag }}" --registry "ghcr.io/${owner}" --out deploy-plan.json; then
+            gh pr comment "$PR" --body "Could not turn that comment into a safe plan (rejected by guardrails). Try: \`/deploy-preview on aws\`"
+            exit 1
+          fi
+
+      - name: Unknown command
+        if: steps.plan.outputs.action == 'unknown'
+        run: |
+          gh pr comment "$PR" --body "I did not understand that. Try \`/deploy-preview on aws|gcp\` or \`/teardown-preview\`."
+          exit 1
+
+      - uses: ./.github/actions/cloud-login
+        with:
+          cloud: ${{ steps.plan.outputs.cloud }}
+          region: ${{ steps.plan.outputs.cloud == 'aws' && vars.AWS_REGION || vars.GCP_REGION }}
+          aws_role_arn: ${{ vars.AWS_ROLE_ARN }}
+          gcp_wif_provider: ${{ vars.GCP_WIF_PROVIDER }}
+          gcp_service_account: ${{ vars.GCP_SERVICE_ACCOUNT }}
+
+      - uses: azure/setup-helm@v4
+      - uses: ./.github/actions/kubeconfig
+        with:
+          cloud: ${{ steps.plan.outputs.cloud }}
+          region: ${{ steps.plan.outputs.cloud == 'aws' && vars.AWS_REGION || vars.GCP_REGION }}
+          cluster_name: ${{ vars.STAGING_NAME || 'idea-board-staging' }}
+          cluster_location: ${{ steps.plan.outputs.cloud == 'aws' && vars.AWS_REGION || (vars.GCP_CLUSTER_LOCATION || format('{0}-a', vars.GCP_REGION)) }}
+          gcp_project_id: ${{ vars.GCP_PROJECT_ID }}
+          install_metrics_server: "false"
+
+      - name: Verify the PR image exists (built by CI)
+        if: steps.plan.outputs.action == 'deploy_preview'
+        run: |
+          owner="${GITHUB_REPOSITORY_OWNER,,}"
+          echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
+          for c in backend frontend; do
+            docker buildx imagetools inspect "ghcr.io/${owner}/idea-board-${c}:${{ steps.pr.outputs.tag }}" >/dev/null || {
+              gh pr comment "$PR" --body "Image \`${{ steps.pr.outputs.tag }}\` is not built yet. Wait for CI to finish on this PR, then comment again."
+              exit 1
+            }
+          done
+
+      - name: Run the AI-planned commands
+        run: |
+          echo "Commands from the validated plan:"
+          jq -r '.commands[]' deploy-plan.json | while IFS= read -r cmd; do
+            echo "+ $cmd"
+            bash -c "$cmd"
+          done
+
+      - name: Mark expiry
+        if: steps.plan.outputs.action == 'deploy_preview'
+        run: |
+          expires=$(( $(date +%s) + ${{ steps.plan.outputs.ttl_hours }} * 3600 ))
+          kubectl annotate namespace "${{ steps.plan.outputs.namespace }}" "idea-board/expires-at=${expires}" --overwrite
+
+      - name: Health check + report
+        if: steps.plan.outputs.action == 'deploy_preview'
+        env:
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          GEMINI_MODEL: ${{ vars.GEMINI_MODEL }}
+          NS: ${{ steps.plan.outputs.namespace }}
+          REL: ${{ steps.plan.outputs.release }}
+        run: |
+          for i in $(seq 1 60); do
+            host="$(kubectl get svc "${REL}-frontend" -n "$NS" -o jsonpath='{.status.loadBalancer.ingress[0].hostname}{.status.loadBalancer.ingress[0].ip}')"
+            [ -n "$host" ] && break; sleep 10
+          done
+          set +e
+          python ai/health_judge.py --namespace "$NS" --release "$REL" --url "http://${host}" \
+            --cloud "${{ steps.plan.outputs.cloud }}" --wait-seconds 300 --out health-report
+          code=$?
+          {
+            echo "## Preview ready on **${{ steps.plan.outputs.cloud }}**: http://${host}"
+            echo "Profile: \`${{ steps.plan.outputs.profile }}\` - expires in ${{ steps.plan.outputs.ttl_hours }}h - plan by ${{ steps.plan.outputs.source }}"
+            echo ""
+            cat health-report.md
+          } > comment.md
+          gh pr comment "$PR" --body-file comment.md
+          exit $code
+
+      - name: Confirm teardown
+        if: steps.plan.outputs.action == 'teardown_preview'
+        run: gh pr comment "$PR" --body "Preview \`${{ steps.plan.outputs.namespace }}\` removed from **${{ steps.plan.outputs.cloud }}**."

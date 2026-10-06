@@ -1,0 +1,6 @@
+region            = "us-east-1"
+name              = "idea-board-staging"
+node_count        = 2
+node_size         = "small"
+db_size           = "small"
+high_availability = false
