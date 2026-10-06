@@ -79,29 +79,46 @@ def http_get(url: str, timeout: int = 10) -> tuple[int, bytes, float]:
         return 0, b"", (time.monotonic() - t0) * 1000
 
 
-def smoke(base: str, wait_seconds: int) -> dict:
-    """End-to-end: browser entry point + API through the nginx proxy + DB. GET-only (no writes to real data)."""
+def _api_ok(base: str) -> tuple[int, float, bool]:
+    s, body, ms = http_get(base + "/api/ideas", timeout=15)
+    try:
+        return s, ms, s == 200 and isinstance(json.loads(body), list)
+    except Exception:
+        return s, ms, False
+
+
+def smoke(base: str, wait_seconds: int, warm_needed: int = 3, samples: int = 10) -> dict:
+    """End-to-end: browser entry point + API through the nginx proxy + DB. GET-only (no writes to real data).
+
+    Two phases, because a brand-new cloud load balancer and a freshly started backend are slow on the
+    FIRST requests (observed: ~6 s) and that must not be mistaken for a broken release:
+      1. warm-up: keep probing until `warm_needed` consecutive successes (or the wait window ends);
+      2. measure: `samples` requests that must ALL succeed; latency is reported for the AI to judge.
+    """
     base = base.rstrip("/")
     deadline = time.monotonic() + wait_seconds
-    status = 0
-    while time.monotonic() < deadline:  # load balancers take minutes to get DNS/health-checks ready
-        status, _, _ = http_get(base + "/")
-        if status == 200:
-            break
-        time.sleep(10)
-    checks = [{"name": "GET /", "ok": status == 200, "status": status}]
-    lat, api_ok, api_status = [], True, 0
-    for _ in range(10):
-        s, body, ms = http_get(base + "/api/ideas")
-        api_status = s
+    streak, root_status = 0, 0
+    while time.monotonic() < deadline and streak < warm_needed:
+        root_status, _, _ = http_get(base + "/", timeout=15)
+        _, _, api_ok = _api_ok(base)
+        streak = streak + 1 if (root_status == 200 and api_ok) else 0
+        if streak < warm_needed:
+            time.sleep(5)
+    warmed = streak >= warm_needed
+
+    statuses, lat, all_ok = [], [], warmed
+    for _ in range(samples if warmed else 1):
+        s, ms, ok = _api_ok(base)
+        statuses.append(s)
         lat.append(ms)
-        try:
-            api_ok = api_ok and s == 200 and isinstance(json.loads(body), list)
-        except Exception:
-            api_ok = False
-    checks.append({"name": "GET /api/ideas x10", "ok": api_ok, "status": api_status})
+        all_ok = all_ok and ok
+    checks = [
+        {"name": "GET /", "ok": root_status == 200, "status": root_status, "statuses": [root_status]},
+        {"name": f"GET /api/ideas x{samples} (after warm-up)", "ok": all_ok, "status": statuses[-1], "statuses": statuses,
+         "note": "" if warmed else f"never reached {warm_needed} consecutive successes within {wait_seconds}s (status 0 = timeout/connection error)"},
+    ]
     return {"ok": all(c["ok"] for c in checks), "checks": checks,
-            "p50_ms": round(statistics.median(lat)), "max_ms": round(max(lat))}
+            "p50_ms": round(statistics.median(lat)), "max_ms": round(max(lat)), "warmed_up": warmed}
 
 
 # ----------------------------------------------------------------------------- judgement
@@ -121,7 +138,8 @@ def hard_gates(ev: dict) -> list[str]:
             fails.append(f"pod {p['name']} restarted {p['restarts']} times")
     for c in ev["smoke"]["checks"]:
         if not c["ok"]:
-            fails.append(f"smoke check failed: {c['name']} (HTTP {c['status']})")
+            detail = ",".join(str(x) for x in c.get("statuses", [c["status"]]))
+            fails.append(f"smoke check failed: {c['name']} (statuses: {detail}; 0 = timeout/connection error) {c.get('note', '')}".strip())
     return fails
 
 

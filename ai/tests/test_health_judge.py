@@ -57,3 +57,46 @@ def test_restart_and_oom_gates():
     ev["pods"][0]["restarts"] = 4
     ev["pods"][1]["last_terminated_reason"] = "OOMKilled"
     assert len(hj.hard_gates(ev)) == 2
+
+
+def test_smoke_tolerates_cold_start_then_passes(monkeypatch):
+    """First requests are slow/timeouts (new LB); once warm, all samples succeed => healthy, not a failure."""
+    calls = {"n": 0}
+
+    def fake_get(url, timeout=10):
+        calls["n"] += 1
+        if calls["n"] <= 4:          # cold: timeouts
+            return 0, b"", 15000.0
+        return 200, b"[]", 40.0
+
+    monkeypatch.setattr(hj, "http_get", fake_get)
+    monkeypatch.setattr(hj.time, "sleep", lambda *_: None)
+    r = hj.smoke("http://x", wait_seconds=600)
+    assert r["ok"] and r["warmed_up"] and r["max_ms"] == 40
+
+
+def test_smoke_fails_if_never_warms_up(monkeypatch):
+    monkeypatch.setattr(hj, "http_get", lambda url, timeout=10: (0, b"", 15000.0))
+    monkeypatch.setattr(hj.time, "sleep", lambda *_: None)
+    ticks = iter(range(0, 10_000, 1))
+    monkeypatch.setattr(hj.time, "monotonic", lambda: next(ticks) * 10.0)
+    r = hj.smoke("http://x", wait_seconds=60)
+    assert not r["ok"] and not r["warmed_up"]
+    assert any("smoke check failed" in g for g in hj.hard_gates({"pods": [{"name": "p", "ready": True, "restarts": 0, "waiting_reason": None, "last_terminated_reason": None, "phase": "Running"}], "smoke": r}))
+
+
+def test_smoke_flaky_sample_after_warmup_is_a_failure(monkeypatch):
+    seq = iter([200, b"[]"] )  # placeholder to keep linters quiet
+    state = {"n": 0}
+
+    def fake_get(url, timeout=10):
+        state["n"] += 1
+        # warm-up uses 2 calls per round (/ and api): 3 rounds = 6 calls; then samples: fail the 3rd sample
+        if state["n"] == 6 + 3 and "/api/ideas" in url:
+            return 502, b"", 20.0
+        return 200, b"[]", 20.0
+
+    monkeypatch.setattr(hj, "http_get", fake_get)
+    monkeypatch.setattr(hj.time, "sleep", lambda *_: None)
+    r = hj.smoke("http://x", wait_seconds=600)
+    assert r["warmed_up"] and not r["ok"]
