@@ -57,7 +57,7 @@ jobs:
           for ns in $(kubectl get ns -o name | sed 's#namespace/##' | grep -E '^(idea-board|pr-[0-9]+)$'); do
             kubectl delete svc --all -n "$ns" --wait=true --timeout=5m
           done
-      - name: Terraform destroy (retries: cloud APIs release dependencies with a delay)
+      - name: "Terraform destroy (with retries; cloud APIs release dependencies with a delay)"
         working-directory: infra/envs/${{ inputs.cloud }}
         run: |
           # GCP: deleting the Service Networking peering right after Cloud SQL is deleted fails with
