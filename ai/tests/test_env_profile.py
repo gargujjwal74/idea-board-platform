@@ -36,3 +36,13 @@ def test_file_mapping_matches_terraform_and_helm_keys():
     tf, helm = ep.to_files(ep.STATIC["high-availability"], "")
     assert set(tf) == {"node_count", "node_size", "db_size", "high_availability"}
     assert helm["autoscaling"]["minReplicas"] == 3
+
+
+def test_single_small_node_is_raised_because_system_pods_fill_it():
+    p, notes = ep.enforce(prof(node_count=1, node_size="small"), max_nodes=4)
+    assert p["node_count"] == 2 and any("system pods" in n for n in notes)
+
+
+def test_single_medium_node_is_allowed():
+    p, _ = ep.enforce(prof(node_count=1, node_size="medium"), max_nodes=4)
+    assert p["node_count"] == 1

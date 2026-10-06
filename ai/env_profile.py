@@ -39,10 +39,20 @@ def fallback(goal: str) -> dict:
     return dict(STATIC["high-availability" if ha else "cost-sensitive"])
 
 
+# Capacity floor per node size. Kubernetes system pods (kube-proxy, DNS, metrics, logging agents...)
+# consume most of a small node: on GKE e2-medium ~911m of ~940m allocatable CPU is already requested,
+# so a lone small node cannot schedule even one app pod. Learned from a real failed deploy.
+MIN_NODES = {"small": 2, "medium": 1, "large": 1}
+
+
 def enforce(p: dict, max_nodes: int) -> tuple[dict, list[str]]:
     """Cross-field guardrails the JSON Schema cannot express. Always applied, even to static profiles."""
     notes: list[str] = []
     a = p["autoscaling"]
+    floor = MIN_NODES[p["node_size"]]
+    if p["node_count"] < floor:
+        notes.append(f"{p['node_size']} nodes need at least {floor} (system pods fill a single small node); raised from {p['node_count']}")
+        p["node_count"] = floor
     if p["node_count"] > max_nodes:
         notes.append(f"node_count {p['node_count']} capped to budget limit {max_nodes}")
         p["node_count"] = max_nodes
