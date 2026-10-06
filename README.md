@@ -8,7 +8,7 @@ A small full-stack app (React + FastAPI + PostgreSQL) used as the payload for a 
 
 | | AWS | GCP |
 |---|---|---|
-| Live URL | `http://<fill-in-after-deploy>` | `http://<fill-in-after-deploy>` |
+| Live URL | _pending (account plan upgrade in progress)_ | http://35.224.129.178 |
 
 ---
 
@@ -241,8 +241,21 @@ No change to the app, chart templates, AI tools, or deployment logic.
 
 ## 7. What was verified
 
+- **GCP, live:** the pipeline provisioned VPC, Cloud NAT, private Cloud SQL (PostgreSQL 16, TLS enforced) and a private-node GKE cluster, then deployed the app. The AI health check passed; an idea posted through the public load balancer is stored in Cloud SQL and read back.
 - Docker Compose stack: end-to-end create/list through the nginx proxy; 5 backend tests pass; both images run as non-root.
-- Helm chart: installed on a real kind cluster, and API call through the service worked.
-- AI health judge live path: verified on kind against a healthy release (healthy) and with the database scaled to zero (unhealthy, exit 1).
-- Terraform: all four roots validate; tflint clean; Trivy only reports the documented exceptions.
-- **Not yet executed:** real `terraform apply` on AWS/GCP and live Gemini calls (these need your credentials and cost money). The checklist in §3 is the path to do so.
+- Helm chart: installed on a real kind cluster.
+- AI tools, against the real Gemini API: sizing, ChatOps planning (prompt-injection attempt had no effect), plan review, and health judgement (the model caught slow queries and pool exhaustion that every deterministic gate missed).
+- AI health judge live path: verified on kind with a healthy release and with the database scaled to zero (unhealthy, exit 1).
+- CI: all jobs green (tests, terraform fmt/validate, tflint, helm lint, Trivy IaC/deps/secrets/images).
+- **AWS:** the same code validates and plans cleanly, but a real apply needs an account that is allowed to use EC2/EKS/RDS (see lessons below).
+
+### Lessons from the first real deployments (and what changed)
+
+| Problem found in production-like conditions | Fix |
+|---|---|
+| Pinned Gemini model (`gemini-2.5-flash`) was retired for new users | Default is a fallback chain `gemini-flash-latest,gemini-3.1-flash-lite`; overloaded (503) or retired (404) models fall through to the next |
+| Pinned Kubernetes `1.31` was rejected by GKE | No pin by default; GKE uses the REGULAR release channel; pinning is an opt-in variable |
+| The AI chose 1 small node for "cost-sensitive"; GKE system pods filled it and the backend could not schedule | New deterministic capacity floor in `env_profile.enforce()` (small nodes need at least 2) plus a test |
+| Trivy found a CRITICAL OpenSSL CVE in the nginx base image | Frontend image runs `apk upgrade`; the CI image gate stays on |
+| `.gitignore` rule `kubeconfig*` also hid `.github/actions/kubeconfig/` | Rule narrowed to `/kubeconfig*` |
+| AWS Free-plan accounts block EC2/EKS/RDS/IAM-OIDC via organization SCPs | Upgrade to the Paid plan (credits are kept) |
