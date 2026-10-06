@@ -22,8 +22,16 @@ runs:
     - if: inputs.install_metrics_server == 'true'
       shell: bash
       run: |
-        # EKS has no metrics-server by default (GKE does); the chart's HPA needs it.
-        if ! kubectl get apiservice v1beta1.metrics.k8s.io >/dev/null 2>&1; then
-          helm repo add metrics-server https://kubernetes-sigs.github.io/metrics-server/ >/dev/null
-          helm upgrade --install metrics-server metrics-server/metrics-server -n kube-system --wait --timeout 3m
-        fi
+        # The HPA needs metrics-server. GKE/AKS ship their own, EKS does not. On a brand-new cluster the
+        # platform's copy appears a minute or two late, so wait for it instead of racing it (installing a
+        # second one collides with the platform's ServiceAccount).
+        for i in $(seq 1 12); do
+          if kubectl get apiservice v1beta1.metrics.k8s.io >/dev/null 2>&1 \
+             || kubectl -n kube-system get serviceaccount metrics-server >/dev/null 2>&1; then
+            echo "metrics-server provided by the platform; not installing"
+            exit 0
+          fi
+          sleep 10
+        done
+        helm repo add metrics-server https://kubernetes-sigs.github.io/metrics-server/ >/dev/null
+        helm upgrade --install metrics-server metrics-server/metrics-server -n kube-system --wait --timeout 3m
