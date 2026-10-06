@@ -26,4 +26,5 @@ dist/
 .DS_Store
 .idea/
 .vscode/
-kubeconfig*
+/kubeconfig*
+*.kubeconfig

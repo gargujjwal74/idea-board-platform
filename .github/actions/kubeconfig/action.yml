@@ -1,0 +1,29 @@
+name: kubeconfig
+description: Point kubectl/helm at the cluster. Second (and last) cloud-specific seam; run after cloud-login.
+inputs:
+  cloud:            { description: "aws | gcp", required: true }
+  region:           { description: "cloud region", required: true }
+  cluster_name:     { description: "cluster name (terraform output cluster_name)", required: true }
+  cluster_location: { description: "cluster location (terraform output cluster_location)", required: true }
+  gcp_project_id:   { description: "GCP project (gcp only)", required: false, default: "" }
+  install_metrics_server: { description: "install metrics-server if missing (needed by HPA)", required: false, default: "true" }
+runs:
+  using: composite
+  steps:
+    - if: inputs.cloud == 'aws'
+      shell: bash
+      run: aws eks update-kubeconfig --name "${{ inputs.cluster_name }}" --region "${{ inputs.region }}"
+    - if: inputs.cloud == 'gcp'
+      uses: google-github-actions/get-gke-credentials@v2
+      with:
+        cluster_name: ${{ inputs.cluster_name }}
+        location: ${{ inputs.cluster_location }}
+        project_id: ${{ inputs.gcp_project_id }}
+    - if: inputs.install_metrics_server == 'true'
+      shell: bash
+      run: |
+        # EKS has no metrics-server by default (GKE does); the chart's HPA needs it.
+        if ! kubectl get apiservice v1beta1.metrics.k8s.io >/dev/null 2>&1; then
+          helm repo add metrics-server https://kubernetes-sigs.github.io/metrics-server/ >/dev/null
+          helm upgrade --install metrics-server metrics-server/metrics-server -n kube-system --wait --timeout 3m
+        fi
