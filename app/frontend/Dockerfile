@@ -9,6 +9,10 @@ RUN npm run build
 # Its entrypoint renders /etc/nginx/templates/*.template with env vars at start.
 FROM nginxinc/nginx-unprivileged:1.27-alpine
 ENV BACKEND_URL=http://backend:8000
+# Pull in security fixes published after the base image was built (e.g. OpenSSL CVEs), then drop root again.
+USER root
+RUN apk upgrade --no-cache
+USER 101
 COPY nginx.conf.template /etc/nginx/templates/default.conf.template
 COPY --from=build /app/dist /usr/share/nginx/html
 EXPOSE 8080
