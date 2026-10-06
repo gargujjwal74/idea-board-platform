@@ -8,7 +8,7 @@ A small full-stack app (React + FastAPI + PostgreSQL) used as the payload for a 
 
 | | AWS | GCP |
 |---|---|---|
-| Live URL | _pending (account plan upgrade in progress)_ | http://104.197.197.128 |
+| Live URL | http://ac41cb4976ab545dcb00f351f40b0ae6-1040985925.us-east-1.elb.amazonaws.com | http://104.197.197.128 |
 
 ---
 
@@ -105,6 +105,11 @@ cd infra/bootstrap/aws
 terraform init
 terraform apply -var github_repo=OWNER/REPO -var state_bucket_name=<globally-unique-name>
 # outputs: role_arn, state_bucket
+#
+# NEW GitHub repos use "immutable subject" OIDC claims (repo:OWNER@ID/REPO@ID:...). Check yours:
+#   gh api repos/OWNER/REPO/actions/oidc/customization/sub --jq .sub_claim_prefix
+# and, if it contains '@', also pass:
+#   -var 'github_extra_sub_patterns=["<sub_claim_prefix>:*"]'
 ```
 
 ### 3.4 Bootstrap GCP (once)
@@ -247,7 +252,7 @@ No change to the app, chart templates, AI tools, or deployment logic.
 - AI tools, against the real Gemini API: sizing, ChatOps planning (prompt-injection attempt had no effect), plan review, and health judgement (the model caught slow queries and pool exhaustion that every deterministic gate missed).
 - AI health judge live path: verified on kind with a healthy release and with the database scaled to zero (unhealthy, exit 1).
 - CI: all jobs green (tests, terraform fmt/validate, tflint, helm lint, Trivy IaC/deps/secrets/images).
-- **AWS:** the same code validates and plans cleanly, but a real apply needs an account that is allowed to use EC2/EKS/RDS (see lessons below).
+- **AWS, live:** the same pipeline provisioned 61 resources (VPC, NAT, EKS, RDS PostgreSQL 16) and deployed the app; health check passed; an idea posted through the ELB is stored in RDS and read back.
 
 ### Lessons from the first real deployments (and what changed)
 
@@ -258,4 +263,5 @@ No change to the app, chart templates, AI tools, or deployment logic.
 | The AI chose 1 small node for "cost-sensitive"; GKE system pods filled it and the backend could not schedule | New deterministic capacity floor in `env_profile.enforce()` (small nodes need at least 2) plus a test |
 | Trivy found a CRITICAL OpenSSL CVE in the nginx base image | Frontend image runs `apk upgrade`; the CI image gate stays on |
 | `.gitignore` rule `kubeconfig*` also hid `.github/actions/kubeconfig/` | Rule narrowed to `/kubeconfig*` |
-| AWS Free-plan accounts block EC2/EKS/RDS/IAM-OIDC via organization SCPs | Upgrade to the Paid plan (credits are kept) |
+| AWS Free-plan accounts block EC2/EKS/RDS/IAM-OIDC via organization SCPs | Upgrade to the Paid plan; the Free-plan member account then became SUSPENDED and the usable account was the organization's management account (not subject to SCPs) |
+| AWS OIDC login: `Not authorized to perform sts:AssumeRoleWithWebIdentity` | New repos send immutable `sub` claims (`repo:owner@id/repo@id:...`); trust policy now accepts both forms |

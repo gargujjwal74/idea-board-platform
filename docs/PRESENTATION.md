@@ -21,7 +21,7 @@ behind 1 module contract, 0 stored cloud credentials.
                                   │ destroy.yml typed-confirmation teardown
                   keyless OIDC ───┴───────────────┬────────────────────────────┐
                                                   ▼                            ▼
-                                   GCP (verified live)              AWS (code ready, account blocked)
+                                   GCP (live)                       AWS (live)
                                    VPC + Cloud NAT                  VPC + NAT
                                    GKE (private nodes)              EKS (managed nodes)
                                    Cloud SQL PG16 (private IP)      RDS PG16 (private)
@@ -137,11 +137,13 @@ state and would block VPC deletion), then `terraform destroy` with retries.
 | 10 | Destroy workflow disappeared | I broke its YAML (unquoted `: ` in a step name) and did not lint before pushing | Run `actionlint` before every workflow push |
 | 11 | Fresh-cluster deploy failed installing metrics-server | Race: GKE installs its own a minute late; we saw "missing" and collided with it | Wait for the platform's copy, install only if absent |
 | 12 | Healthy release judged unhealthy | Smoke test used the cold first request through a brand-new load balancer (~6 s, 10 s timeout) | Warm-up phase (3 consecutive successes) before measuring; honest failure messages; tests |
-| 13 | AWS: every EC2/EKS/RDS call denied | Free-plan accounts live under an AWS-managed Organization with SCPs | Upgrade to Paid (done); restriction still propagating |
-| 14 | Terraform could not read AWS credentials | `aws login` creates `login_session` credentials the provider cannot read | Export short-lived env credentials |
+| 13 | AWS: every EC2/EKS/RDS call denied | Free-plan accounts live under an AWS-managed Organization with SCPs | Upgrading to Paid suspended the Free-plan member account; the organization's management account (exempt from SCPs) was the working one. Took ~half a day of waiting and re-logins |
+| 14 | Terraform could not read AWS credentials | `aws login` creates `login_session` credentials the provider cannot read | Export short-lived env credentials (`aws configure export-credentials`) |
+| 15 | AWS OIDC: `Not authorized to perform sts:AssumeRoleWithWebIdentity` (CloudTrail gave no detail) | New GitHub repos send *immutable* subject claims `repo:owner@id/repo@id:...`, my trust policy matched `repo:owner/repo:*` | Found via `gh api .../oidc/customization/sub`; trust now accepts both. GCP was unaffected because it matches the `repository` claim |
+| 16 | AWS run: sizing step fell back to the static profile | Gemini HTTP 429 (rate limit) on the model chain | Working as designed: graceful degradation; later steps in the same run still used Gemini |
 
 ### Honest limitations
-- AWS is code-complete, validated and plan-clean but **not applied** (account restriction).
+- AWS now runs in the organization's management account (a best-practice violation for real workloads; fine for a personal demo). Credit coverage for that account should be checked in Billing.
 - The first environment's leftover VPC shell (`idea-board-staging`: empty network, peering, reserved range, all free) can only be deleted after Google releases the peering; the Destroy workflow retries automatically.
 - Pipeline roles are broad (admin) for the demo; scope them down for production.
 

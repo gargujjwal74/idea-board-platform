@@ -16,6 +16,15 @@ variable "github_repo" {
   type        = string
   description = "owner/repo allowed to assume the role, e.g. acme/idea-board-platform"
 }
+variable "github_extra_sub_patterns" {
+  type        = list(string)
+  default     = []
+  description = <<-EOT
+    Extra OIDC `sub` patterns allowed to assume the role. GitHub's newer "immutable subject" claims look like
+    repo:OWNER@OWNER_ID/REPO@REPO_ID:...  (get the prefix with:
+    gh api repos/OWNER/REPO/actions/oidc/customization/sub --jq .sub_claim_prefix) and then append ":*".
+  EOT
+}
 variable "state_bucket_name" {
   type        = string
   description = "Globally unique bucket name for Terraform state"
@@ -68,7 +77,7 @@ data "aws_iam_policy_document" "trust" {
     condition {
       test     = "StringLike"
       variable = "token.actions.githubusercontent.com:sub"
-      values   = ["repo:${var.github_repo}:*"]
+      values   = concat(["repo:${var.github_repo}:*"], var.github_extra_sub_patterns)
     }
   }
 }
