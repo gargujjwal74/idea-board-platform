@@ -8,3 +8,7 @@ GCP-0061
 
 # Egress-all on EKS node SG comes from the upstream terraform-aws-modules/eks module (nodes need to reach ECR/GHCR/AWS APIs via NAT).
 AWS-0104
+
+# Terraform state bucket uses SSE-S3 (AES256), not a customer-managed KMS key: acceptable for this
+# project and avoids KMS key cost/lifecycle. Use a CMK for regulated workloads.
+AWS-0132
