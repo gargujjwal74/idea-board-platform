@@ -20,8 +20,8 @@ variable "node_size" {
 }
 variable "kubernetes_version" {
   type        = string
-  default     = "1.31"
-  description = "Minor version; GKE picks the latest patch"
+  default     = null
+  description = "Optional pin (e.g. \"1.34\"). Null = the cloud's current default; old versions get retired, so pinning is opt-in"
 }
 variable "api_allowed_cidrs" {
   type        = list(string)
@@ -71,6 +71,10 @@ resource "google_container_cluster" "this" {
   subnetwork = var.subnet_ids[0]
 
   min_master_version = var.kubernetes_version
+
+  release_channel {
+    channel = "REGULAR" # Google keeps the control plane on a supported version
+  }
 
   # Managed separately so we control size/SA
   remove_default_node_pool = true

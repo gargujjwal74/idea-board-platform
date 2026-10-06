@@ -34,7 +34,7 @@ variable "high_availability" {
 
 variable "kubernetes_version" {
   type    = string
-  default = "1.31"
+  default = null
 }
 
 variable "api_allowed_cidrs" {
