@@ -8,7 +8,7 @@ A small full-stack app (React + FastAPI + PostgreSQL) used as the payload for a 
 
 | | AWS | GCP |
 |---|---|---|
-| Live URL | _pending (account plan upgrade in progress)_ | http://35.224.129.178 |
+| Live URL | _pending (account plan upgrade in progress)_ | http://104.197.197.128 |
 
 ---
 

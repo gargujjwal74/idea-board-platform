@@ -112,9 +112,41 @@ state and would block VPC deletion), then `terraform destroy` with retries.
 6. Run Deploy with `image_tag=doesnotexist` to show the failure path and rollback (takes ~8 min; start it before talking).
 7. Comment `/deploy-preview on gcp` on a PR (needs the workflow on `main`).
 
-## 8. What went well / what went wrong
+## 8. What went well / what went wrong (real events from the build)
 
-See section 9 of this file once the final run completes (updated by the last commit).
+### Worked on the first try
+- Keyless OIDC auth to GCP (Workload Identity Federation) and remote Terraform state.
+- All 22-23 GCP resources (VPC, NAT, private Cloud SQL, private GKE) applied from CI.
+- Helm chart on kind and on GKE; the nginx-proxy / FastAPI / Postgres path.
+- The AI tools against the real Gemini API, including a prompt-injection attempt (no effect) and the health judge catching slow queries every gate missed.
+- The Destroy workflow removed every billable resource (Cloud SQL, GKE) automatically.
+- Cost control: nothing billable left running except what we deploy on purpose.
+
+### Problems found, and what each fix taught us
+| # | What went wrong | Root cause | Fix |
+|---|---|---|---|
+| 1 | CI `security` job failed instantly | Pinned `trivy-action@0.28.0`; tags are now `v0.x` | Pinned to a commit SHA (supply-chain best practice) |
+| 2 | Newer Trivy flagged GKE legacy metadata endpoints | Real hardening gap | Disabled in Terraform; documented the SSE-S3 state-bucket exception |
+| 3 | Image scan failed: CRITICAL OpenSSL CVE | Stale nginx base image | `apk upgrade` in the Dockerfile; the gate stays on |
+| 4 | Gemini HTTP 404, later 503 | Model retired for new users; alias overloaded | Fallback chain of models; every tool also has a deterministic fallback |
+| 5 | GKE rejected Kubernetes `1.31` | Pinned version retired | No pin by default; release channel REGULAR |
+| 6 | Deploy: "can't find action.yml" | `.gitignore` rule `kubeconfig*` hid `.github/actions/kubeconfig` | Narrowed the rule |
+| 7 | Backend pod Pending forever | **AI chose 1 small node**; GKE system pods filled it | New deterministic minimum-nodes rule + tests |
+| 8 | Redeploy would have failed | Cloud SQL names are reserved ~1 week after deletion | Random name suffix |
+| 9 | Destroy failed on the Service Networking peering | Google keeps a hidden producer-side resource after SQL deletion for a long time | Retry with backoff; honest limitation (see below) |
+| 10 | Destroy workflow disappeared | I broke its YAML (unquoted `: ` in a step name) and did not lint before pushing | Run `actionlint` before every workflow push |
+| 11 | Fresh-cluster deploy failed installing metrics-server | Race: GKE installs its own a minute late; we saw "missing" and collided with it | Wait for the platform's copy, install only if absent |
+| 12 | Healthy release judged unhealthy | Smoke test used the cold first request through a brand-new load balancer (~6 s, 10 s timeout) | Warm-up phase (3 consecutive successes) before measuring; honest failure messages; tests |
+| 13 | AWS: every EC2/EKS/RDS call denied | Free-plan accounts live under an AWS-managed Organization with SCPs | Upgrade to Paid (done); restriction still propagating |
+| 14 | Terraform could not read AWS credentials | `aws login` creates `login_session` credentials the provider cannot read | Export short-lived env credentials |
+
+### Honest limitations
+- AWS is code-complete, validated and plan-clean but **not applied** (account restriction).
+- The first environment's leftover VPC shell (`idea-board-staging`: empty network, peering, reserved range, all free) can only be deleted after Google releases the peering; the Destroy workflow retries automatically.
+- Pipeline roles are broad (admin) for the demo; scope them down for production.
+
+### Lesson to say out loud
+Every bug above was found by running the real thing, and each one produced a new test or guardrail (42 tests now). The from-scratch rebuild alone exposed #7, #8, #11 and #12, none of which unit tests or `validate` could find.
 
 ## 9. Likely questions
 
