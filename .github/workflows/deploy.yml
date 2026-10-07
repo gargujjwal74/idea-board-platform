@@ -145,7 +145,15 @@ jobs:
           exit 1
       - name: Terraform apply
         working-directory: infra/envs/${{ matrix.cloud }}
-        run: terraform apply -input=false tfplan
+        run: |
+          if ! terraform apply -input=false tfplan; then
+            # Cloud APIs occasionally fail a single resource transiently (e.g. an empty "Error waiting for
+            # Create Instance"). Re-plan and retry once: already-created resources are kept, only the
+            # remainder is applied. A genuine configuration error fails again and fails the job.
+            echo "::warning::terraform apply failed; re-planning and retrying once"
+            terraform plan -input=false -out=tfplan
+            terraform apply -input=false tfplan
+          fi
 
       - name: Read infrastructure outputs
         id: tf
