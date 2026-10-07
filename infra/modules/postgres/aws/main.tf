@@ -40,10 +40,12 @@ variable "deletion_protection" {
 }
 
 locals {
+  # x86 classes on purpose: Graviton (t4g) RDS capacity is not available in every account/AZ
+  # (verified: no AZs offered db.t4g.micro), while t3/m5 are offered in all the AZs used here.
   instance_class = {
-    small  = "db.t4g.micro"
-    medium = "db.t4g.medium"
-    large  = "db.m6g.large"
+    small  = "db.t3.micro"
+    medium = "db.t3.medium"
+    large  = "db.m5.large"
   }
 }
 
