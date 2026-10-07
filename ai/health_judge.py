@@ -87,13 +87,15 @@ def _api_ok(base: str) -> tuple[int, float, bool]:
         return s, ms, False
 
 
-def smoke(base: str, wait_seconds: int, warm_needed: int = 3, samples: int = 10) -> dict:
+def smoke(base: str, wait_seconds: int, warm_needed: int = 3, samples: int = 10, max_failed_samples: int = 1) -> dict:
     """End-to-end: browser entry point + API through the nginx proxy + DB. GET-only (no writes to real data).
 
     Two phases, because a brand-new cloud load balancer and a freshly started backend are slow on the
     FIRST requests (observed: ~6 s) and that must not be mistaken for a broken release:
       1. warm-up: keep probing until `warm_needed` consecutive successes (or the wait window ends);
-      2. measure: `samples` requests that must ALL succeed; latency is reported for the AI to judge.
+      2. measure: `samples` requests; at most `max_failed_samples` may fail (one stalled connection through a
+         cloud load balancer is not a broken release, while a real outage fails them all). Every status and the
+         latency are reported so the AI can judge the rest.
     """
     base = base.rstrip("/")
     deadline = time.monotonic() + wait_seconds
@@ -106,16 +108,18 @@ def smoke(base: str, wait_seconds: int, warm_needed: int = 3, samples: int = 10)
             time.sleep(5)
     warmed = streak >= warm_needed
 
-    statuses, lat, all_ok = [], [], warmed
+    statuses, lat, failed = [], [], 0
     for _ in range(samples if warmed else 1):
         s, ms, ok = _api_ok(base)
         statuses.append(s)
         lat.append(ms)
-        all_ok = all_ok and ok
+        failed += 0 if ok else 1
+    all_ok = warmed and failed <= max_failed_samples
     checks = [
         {"name": "GET /", "ok": root_status == 200, "status": root_status, "statuses": [root_status]},
         {"name": f"GET /api/ideas x{samples} (after warm-up)", "ok": all_ok, "status": statuses[-1], "statuses": statuses,
-         "note": "" if warmed else f"never reached {warm_needed} consecutive successes within {wait_seconds}s (status 0 = timeout/connection error)"},
+         "failed_samples": failed,
+         "note": f"never reached {warm_needed} consecutive successes within {wait_seconds}s (status 0 = timeout/connection error)" if not warmed else (f"{failed} transient failed sample(s) tolerated" if failed else "")},
     ]
     return {"ok": all(c["ok"] for c in checks), "checks": checks,
             "p50_ms": round(statistics.median(lat)), "max_ms": round(max(lat)), "warmed_up": warmed}

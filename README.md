@@ -92,7 +92,7 @@ The database has a healthcheck and the backend waits for it. The backend creates
 **Other local checks (no cloud account needed)**
 
 ```bash
-make test-ai        # 43 unit tests for the AI tools and their guardrails (no API key needed)
+make test-ai        # 44 unit tests for the AI tools and their guardrails (no API key needed)
 make tf-validate    # terraform fmt + validate for all four roots
 make helm-lint      # lint the chart for local, aws and gcp
 make kind-test      # install the chart into a throwaway kind cluster and call the API
@@ -210,7 +210,7 @@ Four tools live in `ai/`. They share one small Gemini client (`ai/llm.py`), and 
 - branch names are regex-checked, and hostile input (`; rm -rf /`, `$(curl ...)`, `../`) is rejected (covered by tests).
 
 **Deterministic first, AI second.**
-- `health_judge`: hard gates (pod readiness, CrashLoopBackOff, OOMKilled, image pull errors, restart count, an end-to-end HTTP smoke test) are authoritative, and the model **cannot** override a failed gate. The model judges the grey zone: error bursts in logs, database trouble, latency. Outcomes: *healthy* (exit 0); *unhealthy*, which triggers an automatic `helm rollback` (exit 1; hard failures, or AI confidence of at least 0.8); *uncertain*, which keeps the release and asks a human (exit 2). The smoke test warms up first (a brand-new load balancer is slow on the first requests) so a cold start is not mistaken for a bad release.
+- `health_judge`: hard gates (pod readiness, CrashLoopBackOff, OOMKilled, image pull errors, restart count, an end-to-end HTTP smoke test) are authoritative, and the model **cannot** override a failed gate. The model judges the grey zone: error bursts in logs, database trouble, latency. Outcomes: *healthy* (exit 0); *unhealthy*, which triggers an automatic `helm rollback` (exit 1; hard failures, or AI confidence of at least 0.8); *uncertain*, which keeps the release and asks a human (exit 2). The smoke test warms up first (a brand-new load balancer is slow on the first requests) and tolerates a single stalled sample out of ten, so a cold start or one dropped connection is not mistaken for a bad release, while a real outage still fails the gate.
 - `plan_review`: deterministic checks set a **risk floor** (replace or delete of a database, cluster or network; world-open security rules). The final risk is the maximum of the floor and the model's rating, so the model can raise risk but never lower it.
 - `env_profile`: cross-field rules the schema cannot express are enforced after the model answers: HA needs at least 2 nodes and 2 replicas, min replicas cannot exceed max, a node budget cap, and a **minimum node count per size** (Kubernetes system pods fill a single small node, so the app would not schedule).
 
@@ -258,5 +258,5 @@ The application, chart templates, AI tools and deployment logic do not change.
 
 - **Secrets and state:** no credentials in git; Terraform state is remote, versioned and encrypted; `.gitignore` excludes state, tfvars and `.env`.
 - **Preview workflow:** runs only default-branch code with cloud credentials; PR code is never executed with credentials (PR images are built by CI, which has none). Fork PRs and non-collaborators are rejected.
-- **CI gates:** backend tests against a real PostgreSQL, frontend build, 43 AI-guardrail tests, `terraform fmt`/`validate`, `tflint`, `helm lint` (every cloud x profile), Trivy for IaC, dependencies, secrets and images, with `actionlint`-clean workflows.
+- **CI gates:** backend tests against a real PostgreSQL, frontend build, 44 AI-guardrail tests, `terraform fmt`/`validate`, `tflint`, `helm lint` (every cloud x profile), Trivy for IaC, dependencies, secrets and images, with `actionlint`-clean workflows.
 - **Documented trade-offs** (`.trivyignore`): the Kubernetes API endpoint is public but IAM-authenticated so hosted CI runners can deploy (narrow it with `api_allowed_cidrs`); pipeline roles are broad for a self-contained demo and should be scoped down with permission boundaries for production; a single NAT gateway is used for cost.

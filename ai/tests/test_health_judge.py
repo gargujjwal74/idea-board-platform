@@ -85,18 +85,30 @@ def test_smoke_fails_if_never_warms_up(monkeypatch):
     assert any("smoke check failed" in g for g in hj.hard_gates({"pods": [{"name": "p", "ready": True, "restarts": 0, "waiting_reason": None, "last_terminated_reason": None, "phase": "Running"}], "smoke": r}))
 
 
-def test_smoke_flaky_sample_after_warmup_is_a_failure(monkeypatch):
-    seq = iter([200, b"[]"] )  # placeholder to keep linters quiet
-    state = {"n": 0}
+def _warm_then(monkeypatch, failing_sample_numbers):
+    """Warm-up (3 rounds, 2 calls each) succeeds; then the listed API sample numbers (1-based) return a timeout."""
+    state = {"n": 0, "api_after_warm": 0}
 
     def fake_get(url, timeout=10):
         state["n"] += 1
-        # warm-up uses 2 calls per round (/ and api): 3 rounds = 6 calls; then samples: fail the 3rd sample
-        if state["n"] == 6 + 3 and "/api/ideas" in url:
-            return 502, b"", 20.0
+        if state["n"] > 6 and "/api/ideas" in url:
+            state["api_after_warm"] += 1
+            if state["api_after_warm"] in failing_sample_numbers:
+                return 0, b"", 15000.0
         return 200, b"[]", 20.0
 
     monkeypatch.setattr(hj, "http_get", fake_get)
     monkeypatch.setattr(hj.time, "sleep", lambda *_: None)
+
+
+def test_one_transient_failed_sample_is_tolerated(monkeypatch):
+    _warm_then(monkeypatch, {5})
+    r = hj.smoke("http://x", wait_seconds=600)
+    assert r["warmed_up"] and r["ok"]
+    assert r["checks"][1]["failed_samples"] == 1 and "tolerated" in r["checks"][1]["note"]
+
+
+def test_two_failed_samples_fail_the_gate(monkeypatch):
+    _warm_then(monkeypatch, {3, 7})
     r = hj.smoke("http://x", wait_seconds=600)
     assert r["warmed_up"] and not r["ok"]
