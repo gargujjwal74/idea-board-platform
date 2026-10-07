@@ -112,3 +112,27 @@ def test_two_failed_samples_fail_the_gate(monkeypatch):
     _warm_then(monkeypatch, {3, 7})
     r = hj.smoke("http://x", wait_seconds=600)
     assert r["warmed_up"] and not r["ok"]
+
+
+def test_scanner_noise_and_hpa_warmup_are_filtered_from_what_the_model_sees():
+    ev = load("healthy.json")
+    ev["logs"]["frontend"] = [
+        '10.0.1.7 - - "GET /radio.php HTTP/1.1" 200 395',
+        '10.0.1.7 - - "GET /wp-login.php HTTP/1.1" 200 395',
+        '10.0.1.7 - - "GET /.env HTTP/1.1" 200 395',
+        '10.0.1.7 - - "GET / HTTP/1.1" 200 615',
+    ]
+    ev["warning_events"] = [
+        {"reason": "FailedGetResourceMetric", "message": "no metrics returned", "object": "hpa/ib-backend"},
+        {"reason": "BackOff", "message": "Back-off restarting failed container", "object": "pod/x"},
+    ]
+    d = hj.llm_digest(ev)
+    assert d["frontend_log_tail"] == ['10.0.1.7 - - "GET / HTTP/1.1" 200 615']
+    assert d["filtered_as_background_noise"] == {"internet_scanner_requests": 3, "hpa_metrics_warmup_events": 1}
+    assert [e["reason"] for e in d["warning_events"]] == ["BackOff"]   # real problems are NOT filtered
+
+
+def test_real_errors_are_never_filtered_as_noise():
+    ev = load("subtle_errors.json")
+    d = hj.llm_digest(ev)
+    assert d["backend_error_line_count"] == 3 and len(d["backend_log_tail"]) == 4

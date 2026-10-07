@@ -1,0 +1,68 @@
+{
+ "pods": [
+  {
+   "name": "ib-backend-abc",
+   "phase": "Running",
+   "ready": true,
+   "restarts": 0,
+   "waiting_reason": null,
+   "last_terminated_reason": null
+  },
+  {
+   "name": "ib-frontend-def",
+   "phase": "Running",
+   "ready": true,
+   "restarts": 0,
+   "waiting_reason": null,
+   "last_terminated_reason": null
+  }
+ ],
+ "warning_events": [
+  {
+   "reason": "Unhealthy",
+   "message": "Readiness probe failed: Get \"http://10.10.18.136:8000/readyz\": dial tcp 10.10.18.136:8000: connect: connection refused",
+   "object": "ib-backend-abc"
+  },
+  {
+   "reason": "Unhealthy",
+   "message": "Readiness probe failed: Get \"http://10.10.17.188:8080/healthz\": dial tcp 10.10.17.188:8080: connect: connection refused",
+   "object": "ib-frontend-def"
+  },
+  {
+   "reason": "FailedGetResourceMetric",
+   "message": "failed to get cpu utilization: unable to get metrics for resource cpu: no metrics returned from resource metrics API",
+   "object": "hpa/ib-backend"
+  }
+ ],
+ "logs": {
+  "backend": [
+   "INFO database ready",
+   "INFO:     10.0.1.5:4242 - \"GET /readyz HTTP/1.1\" 200 OK",
+   "INFO:     10.0.1.7:5522 - \"GET /api/ideas HTTP/1.1\" 200 OK"
+  ],
+  "frontend": [
+   "10.10.1.5 - - \"GET /radio.php HTTP/1.1\" 200 395",
+   "10.10.1.5 - - \"GET /blacks.php HTTP/1.1\" 200 395",
+   "10.10.1.5 - - \"GET /wp_blog_footer.php HTTP/1.1\" 200 395",
+   "10.10.1.5 - - \"GET /z60.php?p= HTTP/1.1\" 200 395",
+   "10.10.1.9 - - \"GET / HTTP/1.1\" 200 615"
+  ]
+ },
+ "smoke": {
+  "ok": true,
+  "checks": [
+   {
+    "name": "GET /",
+    "ok": true,
+    "status": 200
+   },
+   {
+    "name": "GET /api/ideas x10",
+    "ok": true,
+    "status": 200
+   }
+  ],
+  "p50_ms": 38,
+  "max_ms": 71
+ }
+}

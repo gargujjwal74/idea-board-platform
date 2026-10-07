@@ -25,6 +25,21 @@ from llm import LLMError, generate_json
 BAD_WAITING = {"CrashLoopBackOff", "ImagePullBackOff", "ErrImagePull", "CreateContainerConfigError", "RunContainerError"}
 ERR_RE = re.compile(r"\b(ERROR|CRITICAL|FATAL|Traceback|Exception)\b|\" 5\d\d ")
 SECRET_RE = re.compile(r"(://)[^:@/\s]+:[^@/\s]+@|((?:password|token|secret|api[_-]?key)\s*[=:]\s*)\S+", re.I)
+# Background noise that is NOT a signal about the release:
+#  * internet scanners probe every public IP within hours (.php, wp-*, .env, ...); the SPA fallback answers
+#    200 to unknown paths, so these lines look "successful" but mean nothing about health;
+#  * HPA metrics and probe failures during the first minutes after a rollout are warm-up, not failure.
+SCANNER_RE = re.compile(
+    r"(\.php\b|/wp-(admin|login|content|includes)|/\.env|/\.git|phpmyadmin|/cgi-bin|xmlrpc|/boaform|/HNAP1|"
+    r"/actuator|/vendor/phpunit|/\.aws|/server-status|/owa/|/solr/|/manager/html|/ecp/)", re.I)
+BENIGN_EVENT_REASONS = {"FailedGetResourceMetric", "FailedComputeMetricsReplicas"}
+
+
+def drop_scanner_noise(lines: list[str]) -> tuple[list[str], int]:
+    kept = [l for l in lines if not SCANNER_RE.search(l)]
+    return kept, len(lines) - len(kept)
+
+
 RESTART_LIMIT = 3
 ROLLBACK_CONFIDENCE = 0.8
 HEALTHY_CONFIDENCE = 0.5
@@ -148,14 +163,20 @@ def hard_gates(ev: dict) -> list[str]:
 
 
 def llm_digest(ev: dict) -> dict:
-    be = ev["logs"].get("backend", [])
+    be, be_noise = drop_scanner_noise(ev["logs"].get("backend", []))
+    fe, fe_noise = drop_scanner_noise(ev["logs"].get("frontend", []))
+    events = [e for e in ev["warning_events"] if e.get("reason") not in BENIGN_EVENT_REASONS]
     return {
         "pods": ev["pods"],
-        "warning_events": ev["warning_events"],
+        "warning_events": events,
         "smoke": {"p50_ms": ev["smoke"]["p50_ms"], "max_ms": ev["smoke"]["max_ms"], "checks": ev["smoke"]["checks"]},
         "backend_error_line_count": sum(1 for l in be if ERR_RE.search(l)),
         "backend_log_tail": be[-60:],
-        "frontend_log_tail": ev["logs"].get("frontend", [])[-20:],
+        "frontend_log_tail": fe[-20:],
+        "filtered_as_background_noise": {
+            "internet_scanner_requests": be_noise + fe_noise,
+            "hpa_metrics_warmup_events": len(ev["warning_events"]) - len(events),
+        },
     }
 
 

@@ -92,7 +92,7 @@ The database has a healthcheck and the backend waits for it. The backend creates
 **Other local checks (no cloud account needed)**
 
 ```bash
-make test-ai        # 44 unit tests for the AI tools and their guardrails (no API key needed)
+make test-ai        # 46 unit tests for the AI tools and their guardrails (no API key needed)
 make tf-validate    # terraform fmt + validate for all four roots
 make helm-lint      # lint the chart for local, aws and gcp
 make kind-test      # install the chart into a throwaway kind cluster and call the API
@@ -214,6 +214,8 @@ Four tools live in `ai/`. They share one small Gemini client (`ai/llm.py`), and 
 - `plan_review`: deterministic checks set a **risk floor** (replace or delete of a database, cluster or network; world-open security rules). The final risk is the maximum of the floor and the model's rating, so the model can raise risk but never lower it.
 - `env_profile`: cross-field rules the schema cannot express are enforced after the model answers: HA needs at least 2 nodes and 2 replicas, min replicas cannot exceed max, a node budget cap, and a **minimum node count per size** (Kubernetes system pods fill a single small node, so the app would not schedule).
 
+**Noise is filtered before the model sees it.** A public endpoint is probed by internet scanners within hours (`/wp-login.php`, `/.env`, ...), and a single-page-app server answers 200 to unknown paths, so those requests look "successful". A real deployment once had its logs read as a compromise because of them. Known scanner traffic and HPA metrics warm-up events are now removed deterministically and only counted, the prompt states the same rules, and unit tests cover that real errors are never filtered.
+
 **Graceful degradation.** The Gemini client tries a chain of models (`gemini-3.1-flash-lite`, then `gemini-flash-latest`) with retries and one repair attempt for invalid output. If the AI is still unavailable, each tool has a deterministic fallback (regex parser, static profiles, rule-based summary). A good deployment is never rolled back because the AI API is down, and a broken one is still caught by the gates.
 
 **Prompt-injection hygiene.** Comments, logs and plan names are untrusted. Prompts say so, secrets are redacted from logs before they reach the model, and the architecture means a successful injection can at worst change a summary, never run a command or lower a safety gate.
@@ -258,5 +260,5 @@ The application, chart templates, AI tools and deployment logic do not change.
 
 - **Secrets and state:** no credentials in git; Terraform state is remote, versioned and encrypted; `.gitignore` excludes state, tfvars and `.env`.
 - **Preview workflow:** runs only default-branch code with cloud credentials; PR code is never executed with credentials (PR images are built by CI, which has none). Fork PRs and non-collaborators are rejected.
-- **CI gates:** backend tests against a real PostgreSQL, frontend build, 44 AI-guardrail tests, `terraform fmt`/`validate`, `tflint`, `helm lint` (every cloud x profile), Trivy for IaC, dependencies, secrets and images, with `actionlint`-clean workflows.
+- **CI gates:** backend tests against a real PostgreSQL, frontend build, 46 AI-guardrail tests, `terraform fmt`/`validate`, `tflint`, `helm lint` (every cloud x profile), Trivy for IaC, dependencies, secrets and images, with `actionlint`-clean workflows.
 - **Documented trade-offs** (`.trivyignore`): the Kubernetes API endpoint is public but IAM-authenticated so hosted CI runners can deploy (narrow it with `api_allowed_cidrs`); pipeline roles are broad for a self-contained demo and should be scoped down with permission boundaries for production; a single NAT gateway is used for cost.
