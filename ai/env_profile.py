@@ -41,7 +41,7 @@ def fallback(goal: str) -> dict:
 
 # Capacity floor per node size. Kubernetes system pods (kube-proxy, DNS, metrics, logging agents...)
 # consume most of a small node: on GKE e2-medium ~911m of ~940m allocatable CPU is already requested,
-# so a lone small node cannot schedule even one app pod. Learned from a real failed deploy.
+# so a lone small node cannot schedule even one app pod.
 MIN_NODES = {"small": 2, "medium": 1, "large": 1}
 
 

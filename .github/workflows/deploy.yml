@@ -1,6 +1,9 @@
 name: Deploy
 
-# Manual deploy to one or both clouds, or automatic on main when repo variable AUTO_DEPLOY=true.
+# Deploys to one or both clouds. Triggers:
+#   - manually (workflow_dispatch), or
+#   - automatically after CI succeeds on main, when the repository variable AUTO_DEPLOY is "true"
+#     (so the images for that commit are guaranteed to exist).
 on:
   workflow_dispatch:
     inputs:
@@ -19,12 +22,13 @@ on:
         description: Environment name (prefixes all cloud resources)
         default: ""
       allow_blocked:
-        description: Apply even if the AI/deterministic plan review says "block"
+        description: Apply even if the plan review says "block"
         type: boolean
         default: false
-  push:
+  workflow_run:
+    workflows: [CI]
+    types: [completed]
     branches: [main]
-    paths: [app/**, charts/**, infra/**, ai/**]
 
 permissions:
   contents: read
@@ -32,7 +36,9 @@ permissions:
 
 jobs:
   prepare:
-    if: github.event_name == 'workflow_dispatch' || vars.AUTO_DEPLOY == 'true'
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      (github.event.workflow_run.conclusion == 'success' && vars.AUTO_DEPLOY == 'true')
     runs-on: ubuntu-latest
     outputs:
       matrix: ${{ steps.vars.outputs.matrix }}
@@ -40,18 +46,21 @@ jobs:
       name: ${{ steps.vars.outputs.name }}
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.workflow_run.head_sha || github.sha }}
       - id: vars
         env:
           CLOUDS: ${{ inputs.clouds || 'both' }}
           TAG_IN: ${{ inputs.image_tag }}
           NAME_IN: ${{ inputs.name }}
+          HEAD_SHA: ${{ github.event.workflow_run.head_sha || github.sha }}
         run: |
           case "$CLOUDS" in
             both) m='["aws","gcp"]' ;;
             aws|gcp) m="[\"$CLOUDS\"]" ;;
             *) echo "bad clouds"; exit 1 ;;
           esac
-          tag="${TAG_IN:-sha-${GITHUB_SHA::7}}"
+          tag="${TAG_IN:-sha-${HEAD_SHA::7}}"
           name="${NAME_IN:-${{ vars.STAGING_NAME || 'idea-board-staging' }}}"
           [[ "$tag"  =~ ^[A-Za-z0-9_.-]{1,64}$ ]] || { echo "bad tag"; exit 1; }
           [[ "$name" =~ ^[a-z][a-z0-9-]{2,30}$  ]] || { echo "bad name"; exit 1; }
@@ -93,6 +102,8 @@ jobs:
       TF_VAR_project_id: ${{ vars.GCP_PROJECT_ID }} # ignored by the aws root
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.workflow_run.head_sha || github.sha }}
       - uses: actions/download-artifact@v4
         with: { name: profile, path: generated }
       - uses: actions/setup-python@v5

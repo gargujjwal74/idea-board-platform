@@ -1,7 +1,7 @@
 # Defaults are cloud-neutral. Per-cloud and per-profile overrides live in values/*.yaml.
 
 image:
-  registry: ghcr.io/CHANGE_ME_OWNER
+  registry: ghcr.io/gargujjwal74
   backend: idea-board-backend
   frontend: idea-board-frontend
   tag: latest
