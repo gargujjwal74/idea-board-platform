@@ -21,7 +21,7 @@ API = "https://generativelanguage.googleapis.com/v1beta/models/{model}:generateC
 # Alias that tracks the current Flash model, then a lighter model as fallback when the first is
 # overloaded (503) or retired (404). Pinned names get retired (gemini-2.5-flash already was for new
 # users), so override with GEMINI_MODEL="a,b" only if you need reproducibility.
-DEFAULT_MODEL = "gemini-flash-latest,gemini-3.1-flash-lite"  # comma-separated = fallback chain
+DEFAULT_MODEL = "gemini-3.1-flash-lite,gemini-flash-latest"  # comma-separated = fallback chain, fastest first
 
 # Keywords Gemini's responseSchema (an OpenAPI subset) rejects. We still enforce them locally
 # with jsonschema after the response arrives.
@@ -40,7 +40,9 @@ def _to_gemini_schema(node: Any) -> Any:
     return node
 
 
-def _post(url: str, body: dict, key: str, timeout: int = 90, retries: int = 2) -> dict:
+def _post(url: str, body: dict, key: str, timeout: int = 40, retries: int = 2) -> dict:
+    """POST with a short timeout. Only HTTP 429/5xx are retried (once); a timeout or connection error
+    fails immediately so the caller can move on to the next model instead of stalling the pipeline."""
     data = json.dumps(body).encode()
     for attempt in range(1, retries + 1):
         req = urllib.request.Request(
@@ -53,9 +55,8 @@ def _post(url: str, body: dict, key: str, timeout: int = 90, retries: int = 2) -
             retryable = e.code in (429, 500, 502, 503, 504)
             if not retryable or attempt == retries:
                 raise LLMError(f"Gemini HTTP {e.code}: {e.read().decode(errors='replace')[:300]}") from e
-        except (urllib.error.URLError, TimeoutError) as e:
-            if attempt == retries:
-                raise LLMError(f"Gemini unreachable: {e}") from e
+        except (urllib.error.URLError, TimeoutError, OSError) as e:
+            raise LLMError(f"Gemini unreachable or too slow (>{timeout}s): {e}") from e
         time.sleep(2 ** attempt)
     raise LLMError("unreachable")  # pragma: no cover
 

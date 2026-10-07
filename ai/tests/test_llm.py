@@ -63,3 +63,28 @@ def test_all_models_failing_raises(monkeypatch):
     monkeypatch.setattr(llm, "_post", lambda *a, **k: (_ for _ in ()).throw(llm.LLMError("down")))
     with pytest.raises(llm.LLMError):
         llm.generate_json("x", load_schema("plan_review"))
+
+
+def test_timeout_is_not_retried_and_falls_through_to_next_model(monkeypatch):
+    """A hung model must cost one timeout, not minutes: no retry, move on to the next model."""
+    monkeypatch.delenv("AI_MOCK_RESPONSE", raising=False)
+    monkeypatch.setenv("GEMINI_API_KEY", "k")
+    monkeypatch.setenv("GEMINI_MODEL", "hung-model,ok-model")
+    ok = json.dumps({"risk": "low", "summary": "s", "concerns": [], "recommendation": "approve"})
+    calls = []
+
+    class FakeResp:
+        def __enter__(self): return self
+        def __exit__(self, *a): return False
+        def read(self): return json.dumps({"candidates": [{"content": {"parts": [{"text": ok}]}}]}).encode()
+
+    def fake_urlopen(req, timeout=None):
+        calls.append(req.full_url)
+        if "hung-model" in req.full_url:
+            raise TimeoutError("timed out")
+        return FakeResp()
+
+    monkeypatch.setattr(llm.urllib.request, "urlopen", fake_urlopen)
+    assert llm.generate_json("x", load_schema("plan_review"))["risk"] == "low"
+    assert sum("hung-model" in c for c in calls) == 1   # exactly one attempt on the hung model
+    assert sum("ok-model" in c for c in calls) == 1
