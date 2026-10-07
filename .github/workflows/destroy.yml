@@ -60,10 +60,19 @@ jobs:
       - name: "Terraform destroy (with retries; cloud APIs release dependencies with a delay)"
         working-directory: infra/envs/${{ inputs.cloud }}
         run: |
-          # GCP: deleting the Service Networking peering right after Cloud SQL is deleted fails with
-          # "Producer services are still using this connection" until Google's backend catches up.
+          # GCP: right after Cloud SQL is deleted, removing the Service Networking peering fails with
+          # "Producer services are still using this connection" until Google's backend catches up (can take
+          # hours). The SQL instance is already gone at that point, so after a failed attempt we release the
+          # peering at the compute level; Terraform then sees the connection as gone and finishes the job.
           for attempt in 1 2 3 4; do
             terraform destroy -auto-approve -input=false && exit 0
-            [ "$attempt" -lt 4 ] && { echo "::warning::destroy attempt $attempt failed; retrying in 5 min"; sleep 300; }
+            if [ "$CLOUD" = gcp ]; then
+              echo "::warning::destroy attempt $attempt failed; releasing the VPC peering directly"
+              gcloud compute networks peerings delete servicenetworking-googleapis-com \
+                --network "$NAME" --project "${{ vars.GCP_PROJECT_ID }}" --quiet || true
+            else
+              echo "::warning::destroy attempt $attempt failed; retrying in 2 min"
+              [ "$attempt" -lt 4 ] && sleep 120
+            fi
           done
           exit 1
