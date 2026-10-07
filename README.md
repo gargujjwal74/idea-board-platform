@@ -10,8 +10,8 @@ A small full-stack app (React + FastAPI + PostgreSQL) used as the payload for a 
 
 | Cloud | URL | Stack |
 |---|---|---|
-| **AWS** | http://a3528521c33b64b5a83cd23da0dd5773-2023160980.us-east-1.elb.amazonaws.com | VPC, NAT, EKS, RDS PostgreSQL 16 |
-| **GCP** | http://34.67.59.165 | VPC, Cloud NAT, GKE (private nodes), Cloud SQL PostgreSQL 16 |
+| **AWS** | http://a4e850c43ba8d486cb27dd2c58e9f8e0-931002855.us-east-1.elb.amazonaws.com | VPC, NAT, EKS, RDS PostgreSQL 16 |
+| **GCP** | http://34.132.136.4 | VPC, Cloud NAT, GKE (private nodes), Cloud SQL PostgreSQL 16 |
 
 Both were deployed by the pipeline described in section 3 (`Deploy` workflow, `clouds=both`).
 
