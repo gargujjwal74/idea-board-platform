@@ -61,7 +61,7 @@ jobs:
             *) echo "bad clouds"; exit 1 ;;
           esac
           tag="${TAG_IN:-sha-${HEAD_SHA::7}}"
-          name="${NAME_IN:-${{ vars.STAGING_NAME || 'idea-board-demo' }}}"
+          name="${NAME_IN:-${{ vars.STAGING_NAME || 'idea-board-staging' }}}"
           [[ "$tag"  =~ ^[A-Za-z0-9_.-]{1,64}$ ]] || { echo "bad tag"; exit 1; }
           [[ "$name" =~ ^[a-z][a-z0-9-]{2,30}$  ]] || { echo "bad name"; exit 1; }
           echo "matrix=$m" >> "$GITHUB_OUTPUT"

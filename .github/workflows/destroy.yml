@@ -11,7 +11,7 @@ on:
         required: true
       name:
         description: Environment name (as used at deploy time)
-        default: idea-board-demo
+        default: idea-board-staging
       confirm:
         description: 'Type "destroy" to confirm'
         required: true

@@ -1,7 +1,7 @@
 # Same variable surface on every cloud (plus cloud-specific identity below).
 variable "name" {
   type        = string
-  description = "Environment name; prefixes all resources, e.g. idea-board-demo"
+  description = "Environment name; prefixes all resources, e.g. idea-board-staging"
   default     = "idea-board"
 }
 

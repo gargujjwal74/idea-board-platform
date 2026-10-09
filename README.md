@@ -151,7 +151,7 @@ gh variable set GCP_STATE_BUCKET    -R OWNER/REPO --body "<state_bucket>"
 gh variable set GCP_WIF_PROVIDER    -R OWNER/REPO --body "<workload_identity_provider>"
 gh variable set GCP_SERVICE_ACCOUNT -R OWNER/REPO --body "<service_account>"
 ```
-Optional variables: `STAGING_NAME` (environment name, default `idea-board-demo`), `GEMINI_MODEL` (comma-separated fallback chain), `DEFAULT_CLOUD`, `AUTO_DEPLOY`.
+Optional variables: `STAGING_NAME` (environment name, default `idea-board-staging`), `GEMINI_MODEL` (comma-separated fallback chain), `DEFAULT_CLOUD`, `AUTO_DEPLOY`.
 Optional: add required reviewers to the `aws` and `gcp` GitHub Environments for an approval gate before apply.
 
 ### 3.5 Build and deploy
