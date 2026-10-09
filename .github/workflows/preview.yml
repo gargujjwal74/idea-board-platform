@@ -83,7 +83,7 @@ jobs:
         with:
           cloud: ${{ steps.plan.outputs.cloud }}
           region: ${{ steps.plan.outputs.cloud == 'aws' && vars.AWS_REGION || vars.GCP_REGION }}
-          cluster_name: ${{ vars.STAGING_NAME || 'idea-board-staging' }}
+          cluster_name: ${{ vars.STAGING_NAME || 'idea-board-demo' }}
           cluster_location: ${{ steps.plan.outputs.cloud == 'aws' && vars.AWS_REGION || (vars.GCP_CLUSTER_LOCATION || format('{0}-a', vars.GCP_REGION)) }}
           gcp_project_id: ${{ vars.GCP_PROJECT_ID }}
           install_metrics_server: "false"
